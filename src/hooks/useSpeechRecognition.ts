@@ -8,7 +8,7 @@ interface UseSpeechRecognitionOptions {
 }
 
 export const useSpeechRecognition = (options: UseSpeechRecognitionOptions = {}) => {
-  const { onResult, onError, continuous = false, interimResults = false } = options;
+  const { onResult, onError, interimResults = false } = options;
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +30,6 @@ export const useSpeechRecognition = (options: UseSpeechRecognitionOptions = {}) 
     recognition.continuous = true; // Always use continuous mode internally
     recognition.interimResults = interimResults;
     recognition.lang = 'en-US';
-    recognition.maxAlternatives = 1;
 
     recognition.onstart = () => {
       console.log('[Speech] Recognition started');
