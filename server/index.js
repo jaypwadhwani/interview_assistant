@@ -5,11 +5,22 @@ const multer = require('multer');
 const { OpenAI } = require('openai');
 const path = require('path');
 
+console.log('Starting server...');
+console.log('PORT:', process.env.PORT || 3001);
+console.log('OPENAI_API_KEY set:', !!process.env.OPENAI_API_KEY);
+
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
 const PORT = process.env.PORT || 3001;
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+let openai;
+try {
+  openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  console.log('OpenAI client initialized');
+} catch (err) {
+  console.error('Failed to initialize OpenAI:', err.message);
+}
 
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
