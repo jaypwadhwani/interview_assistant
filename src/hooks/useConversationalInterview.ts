@@ -37,19 +37,27 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
   }, []);
 
   const playAudio = useCallback(async (dataUrl?: string) => {
+    console.log('[Interview] playAudio called, hasDataUrl:', !!dataUrl);
     if (!dataUrl) return;
     return new Promise<void>((resolve) => {
       const audio = new Audio(dataUrl);
       isPlayingAudioRef.current = true;
       audio.onended = () => {
+        console.log('[Interview] Audio playback ended');
         isPlayingAudioRef.current = false;
         resolve();
       };
-      audio.onerror = () => {
+      audio.onerror = (e) => {
+        console.error('[Interview] Audio playback error:', e);
         isPlayingAudioRef.current = false;
         resolve();
       };
-      audio.play().catch(() => resolve());
+      audio.play()
+        .then(() => console.log('[Interview] Audio playing...'))
+        .catch((e) => {
+          console.error('[Interview] Audio play() failed:', e);
+          resolve();
+        });
     });
   }, []);
 
@@ -100,14 +108,17 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
 
   // Handle greeting when conversation starts
   const startConversation = useCallback(() => {
+    console.log('[Interview] startConversation called');
     setConversationState('waiting_confirmation');
     lastActivityRef.current = Date.now();
     // Don't listen while AI is speaking - will resume after speech ends
     updateShouldListen(false);
     setIsListening(false);
     // Start interview from backend
+    console.log('[Interview] Calling API...');
     api.startInterview(jobDetails)
       .then(async (res) => {
+        console.log('[Interview] API response received:', { hasQuestion: !!res.questionText, hasAudio: !!res.questionAudioDataUrl });
         const baseSession = sessionRef.current || {
           id: `session_${Date.now()}`,
           jobDetails,
@@ -138,11 +149,14 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
         setSession(updatedSession);
         sessionRef.current = updatedSession;
         storage.saveCurrentSession(updatedSession);
+        console.log('[Interview] Playing question audio...');
         await playAudio(res.questionAudioDataUrl);
+        console.log('[Interview] Audio done, enabling listening');
         updateShouldListen(true);
         setIsListening(true);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('[Interview] API error:', err);
         // If backend fails, still allow user to answer
         updateShouldListen(true);
         setIsListening(true);

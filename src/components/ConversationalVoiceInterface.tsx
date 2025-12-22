@@ -50,19 +50,26 @@ export const ConversationalVoiceInterface = ({
 
   // Auto-start/stop listening based on shouldListen flag
   useEffect(() => {
-    if (shouldListen && !isPaused && !isListening && conversationState !== 'providing_feedback') {
-      startAnalysis();
-      startRecording().catch(() => {});
-      startListening();
-      setIsListening(true);
+    console.log('[VoiceInterface] useEffect triggered:', { shouldListen, isPaused, isListening, conversationState });
+
+    // Only auto-start if we should be listening and we're not already listening
+    if (shouldListen && !isPaused && conversationState !== 'providing_feedback') {
+      if (!isListening) {
+        console.log('[VoiceInterface] Starting to listen...');
+        startAnalysis();
+        startRecording().catch(() => {});
+        startListening();
+        setIsListening(true);
+      }
     } else if (!shouldListen && isListening) {
+      console.log('[VoiceInterface] Stopping listening...');
       stopListening();
       if (isRecording) {
         stopRecording();
       }
       setIsListening(false);
     }
-  }, [shouldListen, isPaused, isListening, conversationState, isRecording, startAnalysis, startRecording, startListening, stopListening, stopRecording]);
+  }, [shouldListen, isPaused, conversationState]); // Removed isListening from deps to prevent loops
 
   const handleMicrophoneClick = () => {
     if (isPaused) {
