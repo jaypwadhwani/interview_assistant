@@ -1,4 +1,4 @@
-export type VoiceCommand = 
+export type VoiceCommand =
   | 'skip'
   | 'repeat'
   | 'end'
@@ -8,6 +8,7 @@ export type VoiceCommand =
   | 'next'
   | 'yes'
   | 'no'
+  | 'submit'
   | null;
 
 export const detectVoiceCommand = (transcript: string): VoiceCommand => {
@@ -96,7 +97,18 @@ export const detectVoiceCommand = (transcript: string): VoiceCommand => {
   ) {
     return 'no';
   }
-  
+
+  // Submit answer - "thank you" signals done answering
+  if (
+    lowerTranscript.endsWith('thank you') ||
+    lowerTranscript.endsWith('thanks') ||
+    lowerTranscript.endsWith("that's my answer") ||
+    lowerTranscript.endsWith('done answering') ||
+    lowerTranscript.endsWith("that's it")
+  ) {
+    return 'submit';
+  }
+
   return null;
 };
 

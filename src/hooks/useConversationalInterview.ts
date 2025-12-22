@@ -365,8 +365,9 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
   }, [moveToNextQuestion, updateShouldListen, completeSession, pauseSession, resumeSession]);
 
   const handleUserResponse = useCallback(async (transcript: string, _voiceAnalysis?: any, audioBlob?: Blob | null) => {
+    console.log('[Interview] handleUserResponse called with transcript:', transcript);
     lastActivityRef.current = Date.now();
-    
+
     if (pauseTimeoutRef.current) {
       clearTimeout(pauseTimeoutRef.current);
       pauseTimeoutRef.current = null;
@@ -376,8 +377,57 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
 
     // Check for voice commands first
     const command = detectVoiceCommand(transcript);
-    
-    if (command && command !== 'yes' && command !== 'no') {
+    console.log('[Interview] Detected command:', command, 'state:', currentState);
+
+    // Handle submit command - strip trigger phrase and process answer
+    if (command === 'submit') {
+      if (currentState === 'listening' || currentState === 'asking_question') {
+        // Remove the trigger phrase from the answer
+        let cleanedTranscript = transcript.toLowerCase()
+          .replace(/thank you\.?$/i, '')
+          .replace(/thanks\.?$/i, '')
+          .replace(/that's my answer\.?$/i, '')
+          .replace(/done answering\.?$/i, '')
+          .replace(/that's it\.?$/i, '')
+          .trim();
+
+        // Use original case if we have content
+        if (cleanedTranscript.length > 0) {
+          const originalLength = transcript.length;
+          const triggerLength = originalLength - cleanedTranscript.length;
+          cleanedTranscript = transcript.substring(0, transcript.length - triggerLength).trim();
+        }
+
+        console.log('[Interview] Submit detected, cleaned transcript:', cleanedTranscript);
+        updateShouldListen(false);
+        setIsListening(false);
+
+        // Use Whisper if available
+        let finalTranscript = cleanedTranscript || transcript;
+        if (audioBlob) {
+          try {
+            const whisperTranscript = await api.transcribeAudio(audioBlob);
+            if (whisperTranscript) {
+              // Also clean Whisper transcript
+              finalTranscript = whisperTranscript
+                .replace(/thank you\.?$/i, '')
+                .replace(/thanks\.?$/i, '')
+                .replace(/that's my answer\.?$/i, '')
+                .replace(/done answering\.?$/i, '')
+                .replace(/that's it\.?$/i, '')
+                .trim() || whisperTranscript;
+            }
+          } catch (err) {
+            console.error('Whisper transcription failed:', err);
+          }
+        }
+
+        processAnswer(finalTranscript);
+        return;
+      }
+    }
+
+    if (command && command !== 'yes' && command !== 'no' && command !== 'submit') {
       handleVoiceCommand(command);
       return;
     }
@@ -387,26 +437,8 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
       return;
     }
 
-    if (currentState === 'listening' || currentState === 'asking_question') {
-      // This is an answer to the question
-      updateShouldListen(false); // Stop listening while processing
-      setIsListening(false);
-
-      // If we captured audio, prefer Whisper transcription
-      let finalTranscript = transcript;
-      if (audioBlob) {
-        try {
-          const whisperTranscript = await api.transcribeAudio(audioBlob);
-          if (whisperTranscript) {
-            finalTranscript = whisperTranscript;
-          }
-        } catch (err) {
-          console.error('Whisper transcription failed, falling back to browser transcript', err);
-        }
-      }
-
-      processAnswer(finalTranscript);
-    }
+    // For listening state without explicit submit, still accumulate
+    // The answer will be processed when they say "thank you" or similar
 
   }, [handleVoiceCommand, updateShouldListen, processAnswer]);
 
