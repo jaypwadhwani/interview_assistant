@@ -79,21 +79,30 @@ export const ConversationalVoiceInterface = ({
   }, [shouldListen, isPaused, conversationState]);
 
   const handleMicrophoneClick = () => {
+    console.log('[VoiceInterface] Microphone clicked:', { isPaused, conversationState, hasStarted, isListening });
+
     if (isPaused) {
+      console.log('[VoiceInterface] Resuming from pause');
       onResume();
       return;
     }
 
     if (conversationState === 'greeting' && !hasStarted) {
+      console.log('[VoiceInterface] Starting conversation');
       setHasStarted(true);
       onStartConversation();
     } else if (isListening) {
       // Toggle off - pause listening
+      console.log('[VoiceInterface] Pausing listening (manual)');
+      hasStartedListeningRef.current = false; // Sync ref
       stopListening();
       setIsListening(false);
     } else {
       // Toggle on - resume listening
+      console.log('[VoiceInterface] Resuming listening (manual)');
+      hasStartedListeningRef.current = true; // Sync ref
       startAnalysis();
+      startRecording().catch(() => {});
       startListening();
       setIsListening(true);
     }
@@ -142,10 +151,15 @@ export const ConversationalVoiceInterface = ({
           </button>
         )}
 
-        {/* Listening Indicator - Show when actively listening */}
+        {/* Listening Indicator - Show when actively listening, clickable to pause */}
         {isListening && conversationState !== 'greeting' && (
           <>
-            <div className={`w-32 h-32 rounded-full bg-red-500 flex items-center justify-center animate-pulse`}>
+            <button
+              type="button"
+              onClick={handleMicrophoneClick}
+              className={`w-32 h-32 rounded-full bg-red-500 flex items-center justify-center animate-pulse hover:bg-red-600 transition-colors cursor-pointer`}
+              aria-label="Pause listening"
+            >
               <svg className="w-16 h-16 text-white" fill="currentColor" viewBox="0 0 20 20">
                 <path
                   fillRule="evenodd"
@@ -153,14 +167,14 @@ export const ConversationalVoiceInterface = ({
                   clipRule="evenodd"
                 />
               </svg>
-            </div>
-            <div className={`flex items-center gap-3 text-${themeColors.accent}`}>
+            </button>
+            <div className={`flex items-center gap-3`}>
               <div className="flex gap-2">
-                <div className={`w-2 h-2 bg-${themeColors.accent} rounded-full animate-pulse`}></div>
-                <div className={`w-2 h-2 bg-${themeColors.accent} rounded-full animate-pulse`} style={{ animationDelay: '0.2s' }}></div>
-                <div className={`w-2 h-2 bg-${themeColors.accent} rounded-full animate-pulse`} style={{ animationDelay: '0.4s' }}></div>
+                <div className={`w-2 h-2 bg-red-500 rounded-full animate-pulse`}></div>
+                <div className={`w-2 h-2 bg-red-500 rounded-full animate-pulse`} style={{ animationDelay: '0.2s' }}></div>
+                <div className={`w-2 h-2 bg-red-500 rounded-full animate-pulse`} style={{ animationDelay: '0.4s' }}></div>
               </div>
-              <span className={`text-base font-semibold ${themeColors.text}`}>Listening...</span>
+              <span className={`text-base font-semibold ${themeColors.text}`}>Listening... (click to pause)</span>
             </div>
           </>
         )}
