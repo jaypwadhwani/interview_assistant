@@ -152,14 +152,14 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
         console.log('[Interview] Playing question audio...');
         await playAudio(res.questionAudioDataUrl);
         console.log('[Interview] Audio done, enabling listening');
+        setConversationState('listening');
         updateShouldListen(true);
-        setIsListening(true);
       })
       .catch((err) => {
         console.error('[Interview] API error:', err);
         // If backend fails, still allow user to answer
+        setConversationState('listening');
         updateShouldListen(true);
-        setIsListening(true);
       });
   }, [jobDetails, playAudio, updateShouldListen]);
 

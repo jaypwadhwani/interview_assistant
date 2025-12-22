@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { useVoiceAnalysis } from '../hooks/useVoiceAnalysis';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
@@ -48,28 +48,35 @@ export const ConversationalVoiceInterface = ({
     interimResults: false,
   });
 
+  // Track if we've started listening for this shouldListen=true period
+  const hasStartedListeningRef = useRef(false);
+
   // Auto-start/stop listening based on shouldListen flag
   useEffect(() => {
-    console.log('[VoiceInterface] useEffect triggered:', { shouldListen, isPaused, isListening, conversationState });
+    console.log('[VoiceInterface] useEffect triggered:', { shouldListen, isPaused, conversationState, hasStarted: hasStartedListeningRef.current });
 
-    // Only auto-start if we should be listening and we're not already listening
+    // Only auto-start if we should be listening and haven't started yet
     if (shouldListen && !isPaused && conversationState !== 'providing_feedback') {
-      if (!isListening) {
+      if (!hasStartedListeningRef.current) {
         console.log('[VoiceInterface] Starting to listen...');
+        hasStartedListeningRef.current = true;
         startAnalysis();
         startRecording().catch(() => {});
         startListening();
         setIsListening(true);
       }
-    } else if (!shouldListen && isListening) {
-      console.log('[VoiceInterface] Stopping listening...');
-      stopListening();
-      if (isRecording) {
-        stopRecording();
+    } else if (!shouldListen) {
+      if (hasStartedListeningRef.current) {
+        console.log('[VoiceInterface] Stopping listening...');
+        hasStartedListeningRef.current = false;
+        stopListening();
+        if (isRecording) {
+          stopRecording();
+        }
+        setIsListening(false);
       }
-      setIsListening(false);
     }
-  }, [shouldListen, isPaused, conversationState]); // Removed isListening from deps to prevent loops
+  }, [shouldListen, isPaused, conversationState]);
 
   const handleMicrophoneClick = () => {
     if (isPaused) {
