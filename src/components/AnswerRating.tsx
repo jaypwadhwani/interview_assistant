@@ -1,7 +1,5 @@
-import { useEffect } from 'react';
 import { AnswerRating as AnswerRatingType } from '../types';
 import { ColorScheme, getTheme } from '../utils/theme';
-import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';
 
 interface AnswerRatingProps {
   rating: AnswerRatingType;
@@ -18,14 +16,9 @@ const getMetricColor = (value: number): string => {
 
 export const AnswerRating = ({ rating, answer, theme }: AnswerRatingProps) => {
   const themeColors = getTheme(theme);
-  const { speak, isSpeaking } = useSpeechSynthesis();
 
-  useEffect(() => {
-    if (rating.feedback) {
-      speak(rating.feedback);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rating.feedback]);
+  // Audio is handled by OpenAI TTS in useConversationalInterview
+  // No need for browser speech synthesis here
 
   const getScoreColor = (score: number): string => {
     if (score >= 8.5) return 'text-green-600 bg-green-50 border-green-200';
@@ -62,23 +55,14 @@ export const AnswerRating = ({ rating, answer, theme }: AnswerRatingProps) => {
       </div>
 
       <div className={`bg-gray-50 rounded-2xl p-6 border ${themeColors.border}`}>
-        <p className={`${themeColors.text} whitespace-pre-wrap leading-relaxed`}>{answer}</p>
+        <h4 className={`text-sm font-semibold ${themeColors.textSecondary} mb-3 uppercase tracking-wide`}>Full Transcript:</h4>
+        <p className={`${themeColors.text} whitespace-pre-wrap leading-relaxed`}>{answer || 'No transcript available'}</p>
       </div>
 
       <div className="flex items-center gap-3">
         <span className={`text-sm font-semibold px-4 py-2 rounded-xl border ${getScoreColor(rating.score)}`}>
           {getScoreLabel(rating.score)}
         </span>
-        {isSpeaking && (
-          <span className={`${themeColors.textSecondary} text-sm flex items-center gap-2`}>
-            <div className="flex gap-1">
-              <div className={`w-2 h-2 bg-${themeColors.accent} rounded-full animate-pulse`}></div>
-              <div className={`w-2 h-2 bg-${themeColors.accent} rounded-full animate-pulse`} style={{ animationDelay: '0.2s' }}></div>
-              <div className={`w-2 h-2 bg-${themeColors.accent} rounded-full animate-pulse`} style={{ animationDelay: '0.4s' }}></div>
-            </div>
-            Providing feedback...
-          </span>
-        )}
       </div>
 
       <div className={`bg-${themeColors.accent}/10 border-l-4 border-${themeColors.accent} rounded-2xl p-6`}>

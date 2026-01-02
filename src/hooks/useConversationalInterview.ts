@@ -1,19 +1,122 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { InterviewSession, JobDetails, InterviewQuestion, AnswerRating } from '../types';
-import { storage } from '../utils/storage';
-import { detectVoiceCommand, VoiceCommand } from '../utils/voiceCommands';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { InterviewSession, InterviewQuestion, AnswerRating, JobDetails } from '../types';
 import { api } from '../utils/api';
+import { storage } from '../utils/storage';
+import { detectVoiceCommand } from '../utils/voiceCommands';
 
-interface UseConversationalInterviewOptions {
+type ConversationState = 'greeting' | 'waiting_confirmation' | 'asking_question' | 'listening' | 'providing_feedback' | 'asking_feedback_preference';
+
+export interface UseConversationalInterviewOptions {
   jobDetails: JobDetails;
   onComplete?: () => void;
 }
 
-type ConversationState = 'greeting' | 'waiting_confirmation' | 'asking_question' | 'listening' | 'providing_feedback' | 'asking_feedback_preference';
+// Simple global audio manager - only ONE audio element for the entire app
+class GlobalAudioManager {
+  private static instance: GlobalAudioManager | null = null;
+  private audio: HTMLAudioElement;
+  private currentDataUrl: string | null = null;
+  private isPlaying: boolean = false;
+  private instanceId: string;
+  
+  private constructor() {
+    this.instanceId = `AudioManager_${Date.now()}_${Math.random().toString(36).substr(2,9)}`;
+    this.audio = new Audio();
+    console.log(`[AudioManager] Created instance: ${this.instanceId}`);
+    
+    // Store on window to ensure true singleton across all module loads
+    if ((window as any).__globalAudioManager) {
+      console.error('[AudioManager] WARNING: Another manager already exists!');
+      return (window as any).__globalAudioManager;
+    }
+    (window as any).__globalAudioManager = this;
+  }
+  
+  static getInstance(): GlobalAudioManager {
+    // Always check window first to ensure true singleton
+    if ((window as any).__globalAudioManager) {
+      return (window as any).__globalAudioManager;
+    }
+    
+    if (!GlobalAudioManager.instance) {
+      GlobalAudioManager.instance = new GlobalAudioManager();
+    }
+    return GlobalAudioManager.instance;
+  }
+  
+  async play(dataUrl: string): Promise<void> {
+    console.log(`[AudioManager ${this.instanceId}] play() called`, {
+      currentlyPlaying: this.isPlaying,
+      sameUrl: this.currentDataUrl === dataUrl,
+      paused: this.audio.paused
+    });
+    
+    // If already playing this exact audio, skip
+    if (this.isPlaying && this.currentDataUrl === dataUrl && !this.audio.paused) {
+      console.log(`[AudioManager ${this.instanceId}] Already playing this audio, skipping`);
+      return;
+    }
+    
+    // Stop any current playback
+    this.stop();
+    
+    return new Promise<void>((resolve) => {
+      this.currentDataUrl = dataUrl;
+      this.isPlaying = true;
+      this.audio.src = dataUrl;
+      
+      this.audio.onended = () => {
+        console.log(`[AudioManager ${this.instanceId}] Playback ended`);
+        this.isPlaying = false;
+        this.currentDataUrl = null;
+        resolve();
+      };
+      
+      this.audio.onerror = (e) => {
+        console.error(`[AudioManager ${this.instanceId}] Playback error:`, e);
+        this.isPlaying = false;
+        this.currentDataUrl = null;
+        resolve();
+      };
+      
+      this.audio.play()
+        .then(() => console.log(`[AudioManager ${this.instanceId}] Playing`))
+        .catch((e) => {
+          console.error(`[AudioManager ${this.instanceId}] Play failed:`, e);
+          this.isPlaying = false;
+          this.currentDataUrl = null;
+          resolve();
+        });
+    });
+  }
+  
+  stop(): void {
+    if (!this.audio.paused) {
+      console.log(`[AudioManager ${this.instanceId}] Stopping audio`);
+      this.audio.pause();
+    }
+    this.audio.currentTime = 0;
+    this.isPlaying = false;
+    this.currentDataUrl = null;
+  }
+  
+  pause(): void {
+    if (!this.audio.paused) {
+      console.log(`[AudioManager ${this.instanceId}] Pausing audio`);
+      this.audio.pause();
+    }
+  }
+  
+  getIsPlaying(): boolean {
+    return this.isPlaying && !this.audio.paused;
+  }
+}
 
 export const useConversationalInterview = (options: UseConversationalInterviewOptions) => {
   const { jobDetails, onComplete } = options;
+  const audioManager = useRef(GlobalAudioManager.getInstance());
   
+  // States
   const [session, setSession] = useState<InterviewSession | null>(null);
   const [currentQuestion, setCurrentQuestion] = useState<InterviewQuestion | null>(null);
   const [currentAnswer, setCurrentAnswer] = useState('');
@@ -22,60 +125,60 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
   const [isPaused, setIsPaused] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [shouldListen, setShouldListen] = useState(false);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [readyPromptText, setReadyPromptText] = useState<string | null>(null);
+  const [endSessionPromptText, setEndSessionPromptText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
   
-  const pauseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastActivityRef = useRef<number>(Date.now());
+  // Refs
   const sessionRef = useRef<InterviewSession | null>(null);
   const conversationStateRef = useRef<ConversationState>('greeting');
-  const shouldListenRef = useRef<boolean>(false); // Keep ref for sync access in callbacks
+  const shouldListenRef = useRef<boolean>(false);
   const isPlayingAudioRef = useRef<boolean>(false);
-
-  // Helper to update shouldListen (both state and ref)
+  const accumulatedTranscriptRef = useRef<string>('');
+  const pendingNextQuestionRef = useRef<{ question: InterviewQuestion; audioDataUrl: string; session: InterviewSession } | null>(null);
+  const readyPromptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endSessionPromptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isProcessingRef = useRef<boolean>(false);
+  
+  // Sync state to refs
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+  
+  useEffect(() => {
+    conversationStateRef.current = conversationState;
+  }, [conversationState]);
+  
+  useEffect(() => {
+    shouldListenRef.current = shouldListen;
+  }, [shouldListen]);
+  
+  useEffect(() => {
+    isPlayingAudioRef.current = isPlayingAudio;
+  }, [isPlayingAudio]);
+  
+  // Update shouldListen helper
   const updateShouldListen = useCallback((value: boolean) => {
     shouldListenRef.current = value;
     setShouldListen(value);
   }, []);
-
+  
+  // Play audio wrapper
   const playAudio = useCallback(async (dataUrl?: string) => {
-    console.log('[Interview] playAudio called, hasDataUrl:', !!dataUrl);
     if (!dataUrl) return;
-    return new Promise<void>((resolve) => {
-      const audio = new Audio(dataUrl);
-      isPlayingAudioRef.current = true;
-      audio.onended = () => {
-        console.log('[Interview] Audio playback ended');
-        isPlayingAudioRef.current = false;
-        resolve();
-      };
-      audio.onerror = (e) => {
-        console.error('[Interview] Audio playback error:', e);
-        isPlayingAudioRef.current = false;
-        resolve();
-      };
-      audio.play()
-        .then(() => console.log('[Interview] Audio playing...'))
-        .catch((e) => {
-          console.error('[Interview] Audio play() failed:', e);
-          resolve();
-        });
-    });
+    
+    setIsPlayingAudio(true);
+    await audioManager.current.play(dataUrl);
+    setIsPlayingAudio(false);
   }, []);
-
-  // Sync refs with state
-  useEffect(() => {
-    sessionRef.current = session;
-  }, [session]);
-
-  useEffect(() => {
-    conversationStateRef.current = conversationState;
-  }, [conversationState]);
-
+  
   // Initialize session
   useEffect(() => {
     const existingSession = storage.loadCurrentSession();
     
     if (existingSession && existingSession.jobDetails.jobTitle === jobDetails.jobTitle && existingSession.status === 'paused') {
-      // Resume paused session
       setSession(existingSession);
       setConversationState(existingSession.conversationState || 'asking_question');
       setIsPaused(false);
@@ -86,7 +189,6 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
         }
       }
     } else {
-      // Create new session
       const newSession: InterviewSession = {
         id: `session_${Date.now()}`,
         jobDetails,
@@ -103,23 +205,196 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
       sessionRef.current = newSession;
       storage.saveCurrentSession(newSession);
     }
+    setError(null);
   }, [jobDetails]);
-
-
-  // Handle greeting when conversation starts
-  const startConversation = useCallback(() => {
-    console.log('[Interview] startConversation called');
-    setConversationState('waiting_confirmation');
-    lastActivityRef.current = Date.now();
-    // Don't listen while AI is speaking - will resume after speech ends
+  
+  // Cleanup timeouts
+  useEffect(() => {
+    return () => {
+      if (readyPromptTimeoutRef.current) clearTimeout(readyPromptTimeoutRef.current);
+      if (endSessionPromptTimeoutRef.current) clearTimeout(endSessionPromptTimeoutRef.current);
+    };
+  }, []);
+  
+  // Complete session
+  const completeSession = useCallback(() => {
+    const currentSession = sessionRef.current;
+    if (!currentSession) return;
+    
+    // Stop any playing audio immediately
+    audioManager.current.stop();
+    
+    if (readyPromptTimeoutRef.current) clearTimeout(readyPromptTimeoutRef.current);
+    if (endSessionPromptTimeoutRef.current) clearTimeout(endSessionPromptTimeoutRef.current);
+    
+    const updatedSession: InterviewSession = {
+      ...currentSession,
+      status: 'completed',
+      updatedAt: new Date().toISOString(),
+    };
+    setSession(updatedSession);
+    sessionRef.current = updatedSession;
+    storage.saveCurrentSession(updatedSession);
+    
     updateShouldListen(false);
     setIsListening(false);
-    // Start interview from backend
-    console.log('[Interview] Calling API...');
-    api.startInterview(jobDetails)
-      .then(async (res) => {
-        console.log('[Interview] API response received:', { hasQuestion: !!res.questionText, hasAudio: !!res.questionAudioDataUrl });
-        const baseSession = sessionRef.current || {
+    setConversationState('greeting');
+    setIsPlayingAudio(false);
+    
+    if (onComplete) {
+      onComplete();
+    }
+  }, [onComplete, updateShouldListen]);
+  
+  // Generate ready prompt variations
+  const generateReadyPrompt = useCallback((): string => {
+    const prompts = [
+      "Are you ready for the next question?",
+      "Ready to move on?",
+      "Should we continue?"
+    ];
+    return prompts[Math.floor(Math.random() * prompts.length)];
+  }, []);
+  
+  // Ask if ready for next question
+  const askIfReadyForNextQuestion = useCallback(async () => {
+    if (readyPromptTimeoutRef.current) clearTimeout(readyPromptTimeoutRef.current);
+    
+    const prompt = generateReadyPrompt();
+    setReadyPromptText(prompt);
+    
+    let promptAudioDataUrl: string | undefined;
+    try {
+      promptAudioDataUrl = await api.generateTTS(prompt);
+    } catch (err) {
+      console.error('[Interview] TTS error:', err);
+    }
+    
+    setConversationState('asking_question');
+    updateShouldListen(true);
+    
+    if (promptAudioDataUrl) {
+      await playAudio(promptAudioDataUrl);
+    }
+    
+    readyPromptTimeoutRef.current = setTimeout(() => {
+      completeSession();
+    }, 15000);
+  }, [generateReadyPrompt, playAudio, updateShouldListen, completeSession]);
+  
+  // Handle ready response
+  const handleReadyResponse = useCallback(async (response: 'yes' | 'no') => {
+    if (readyPromptTimeoutRef.current) clearTimeout(readyPromptTimeoutRef.current);
+    setReadyPromptText(null);
+    
+    if (response === 'yes') {
+      const pending = pendingNextQuestionRef.current;
+      if (!pending) return;
+      
+      pendingNextQuestionRef.current = null;
+      const { question, audioDataUrl, session } = pending;
+      
+      setCurrentQuestion(question);
+      setCurrentAnswer('');
+      setCurrentRating(null);
+      setSession(session);
+      sessionRef.current = session;
+      storage.saveCurrentSession(session);
+      
+      accumulatedTranscriptRef.current = '';
+      setConversationState('asking_question');
+      updateShouldListen(false);
+      
+      if (audioDataUrl) {
+        await playAudio(audioDataUrl);
+      }
+      
+      setConversationState('listening');
+      updateShouldListen(true);
+    } else {
+      const endPrompt = "Would you like to end the session?";
+      setEndSessionPromptText(endPrompt);
+      
+      let endPromptAudio: string | undefined;
+      try {
+        endPromptAudio = await api.generateTTS(endPrompt);
+      } catch (err) {
+        console.error('[Interview] TTS error:', err);
+      }
+      
+      setConversationState('asking_question');
+      updateShouldListen(true);
+      
+      if (endPromptAudio) {
+        await playAudio(endPromptAudio);
+      }
+      
+      endSessionPromptTimeoutRef.current = setTimeout(() => {
+        completeSession();
+      }, 15000);
+    }
+  }, [playAudio, updateShouldListen, completeSession]);
+  
+  // Start conversation
+  const startConversation = useCallback(async () => {
+    if (isProcessingRef.current) {
+      console.log('[Interview] Already processing, ignoring');
+      return;
+    }
+    
+    isProcessingRef.current = true;
+    setIsStarting(true);
+    setError(null);
+    setConversationState('waiting_confirmation');
+    updateShouldListen(false);
+    setIsListening(false);
+    
+    try {
+      const res = await api.startInterview(jobDetails);
+      
+      if (!sessionRef.current) {
+        console.error('[Interview] Session is null after API call');
+        return;
+      }
+      
+      const question: InterviewQuestion = {
+        questionNumber: 1,
+        questionText: res.questionText || 'Tell me about yourself.',
+      };
+      
+      const updatedSession: InterviewSession = {
+        ...sessionRef.current,
+        questions: [question],
+        currentQuestionIndex: 0,
+        updatedAt: new Date().toISOString(),
+      };
+      
+      setSession(updatedSession);
+      sessionRef.current = updatedSession;
+      storage.saveCurrentSession(updatedSession);
+      setCurrentQuestion(question);
+      
+      accumulatedTranscriptRef.current = '';
+      setConversationState('asking_question');
+      updateShouldListen(false);
+      
+      if (res.questionAudioDataUrl) {
+        await playAudio(res.questionAudioDataUrl);
+      }
+      
+      setConversationState('listening');
+      updateShouldListen(true);
+      setIsStarting(false);
+      isProcessingRef.current = false;
+    } catch (err) {
+      console.error('[Interview] API error:', err);
+      const errorMessage = (err as any)?.message || 'Failed to start interview. Please check your connection and try again.';
+      setError(errorMessage);
+      setIsStarting(false);
+      isProcessingRef.current = false;
+      
+      if (!sessionRef.current) {
+        const fallbackSession: InterviewSession = {
           id: `session_${Date.now()}`,
           jobDetails,
           questions: [],
@@ -127,114 +402,105 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
           ratings: [],
           currentQuestionIndex: 0,
           status: 'active',
-          conversationState: 'greeting',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-        } as InterviewSession;
-
-        const firstQuestion: InterviewQuestion = {
-          questionNumber: 1,
-          questionText: res.questionText,
+          conversationState: 'greeting',
         };
-        setCurrentQuestion(firstQuestion);
-        setConversationState('asking_question');
-        const updatedSession: InterviewSession = {
-          ...baseSession,
-          questions: [firstQuestion],
-          currentQuestionIndex: 0,
-          conversationState: 'asking_question',
-          status: 'active',
-          updatedAt: new Date().toISOString(),
-        };
-        setSession(updatedSession);
-        sessionRef.current = updatedSession;
-        storage.saveCurrentSession(updatedSession);
-        console.log('[Interview] Playing question audio...');
-        await playAudio(res.questionAudioDataUrl);
-        console.log('[Interview] Audio done, enabling listening');
-        setConversationState('listening');
-        updateShouldListen(true);
-      })
-      .catch((err) => {
-        console.error('[Interview] API error:', err);
-        // If backend fails, still allow user to answer
-        setConversationState('listening');
-        updateShouldListen(true);
-      });
-  }, [jobDetails, playAudio, updateShouldListen]);
-
-  const moveToNextQuestion = useCallback(async () => {
-    const currentSession = sessionRef.current;
-    if (!currentSession) return;
-
-    const prompt = 'Please give me the next interview question.';
-    try {
-      const resp = await api.sendInterviewTurn({
-        transcript: prompt,
-        jobDetails,
-    history: currentSession.answers.map((a) => ({
-          role: 'user',
-          content: a,
-        })),
-      });
-
-      const nextQuestionIndex = currentSession.currentQuestionIndex + 1;
-      const nextQuestion: InterviewQuestion = {
-        questionNumber: nextQuestionIndex + 1,
-        questionText: resp.nextQuestion,
-      };
-
-      const updatedSession: InterviewSession = {
-        ...currentSession,
-        currentQuestionIndex: nextQuestionIndex,
-        questions: [...currentSession.questions, nextQuestion],
-        conversationState: 'asking_question',
-        updatedAt: new Date().toISOString(),
-      };
-
-      setSession(updatedSession);
-      sessionRef.current = updatedSession;
-      setCurrentQuestion(nextQuestion);
-      setCurrentAnswer('');
-      setCurrentRating(null);
-      setConversationState('asking_question');
-      storage.saveCurrentSession(updatedSession);
-
+        setSession(fallbackSession);
+        sessionRef.current = fallbackSession;
+        storage.saveCurrentSession(fallbackSession);
+      }
+      
+      setConversationState('greeting');
       updateShouldListen(false);
       setIsListening(false);
-      await playAudio(resp.questionAudioDataUrl);
-      updateShouldListen(true);
-      setIsListening(true);
-    } catch (err) {
-      console.error('moveToNextQuestion error', err);
-      updateShouldListen(true);
-      setIsListening(true);
     }
   }, [jobDetails, playAudio, updateShouldListen]);
-
-  const processAnswer = useCallback(async (answer: string) => {
+  
+  // Move to next question
+  const moveToNextQuestion = useCallback(async () => {
+    if (isProcessingRef.current) return;
+    
     const currentSession = sessionRef.current;
-    if (!currentSession || !currentQuestion || !answer.trim()) {
+    const currentQ = currentQuestion;
+    
+    if (!currentSession || !currentQ) {
+      if (conversationStateRef.current === 'greeting') {
+        startConversation();
+      }
       return;
     }
-
-    // Call backend for rating/feedback/next question
+    
+    isProcessingRef.current = true;
+    
+    try {
+      setConversationState('asking_question');
+      updateShouldListen(false);
+      
+      const resp = await api.sendInterviewTurn({
+        transcript: '',
+        jobDetails: currentSession.jobDetails,
+        history: [],
+      });
+      
+      const nextQuestion: InterviewQuestion = {
+        questionNumber: currentSession.currentQuestionIndex + 2,
+        questionText: resp.nextQuestion || 'Tell me more.',
+      };
+      
+      const updatedSession: InterviewSession = {
+        ...currentSession,
+        questions: [...currentSession.questions, nextQuestion],
+        currentQuestionIndex: currentSession.currentQuestionIndex + 1,
+        updatedAt: new Date().toISOString(),
+      };
+      
+      setSession(updatedSession);
+      sessionRef.current = updatedSession;
+      storage.saveCurrentSession(updatedSession);
+      setCurrentQuestion(nextQuestion);
+      
+      accumulatedTranscriptRef.current = '';
+      
+      if (resp.questionAudioDataUrl) {
+        await playAudio(resp.questionAudioDataUrl);
+      }
+      
+      setConversationState('listening');
+      updateShouldListen(true);
+      isProcessingRef.current = false;
+    } catch (err) {
+      console.error('[Interview] Error moving to next question:', err);
+      isProcessingRef.current = false;
+    }
+  }, [currentQuestion, jobDetails, playAudio, updateShouldListen, startConversation]);
+  
+  // Process answer
+  const processAnswer = useCallback(async (answer: string) => {
+    const currentSession = sessionRef.current;
+    const currentQ = currentQuestion;
+    
+    if (!currentSession || !currentQ || !answer.trim()) return;
+    
+    setConversationState('providing_feedback');
+    updateShouldListen(false);
+    setIsListening(false);
+    
     try {
       const resp = await api.sendInterviewTurn({
         transcript: answer,
-        jobDetails,
-        history: currentSession.answers.map((a) => ({ role: 'user', content: a })),
+        jobDetails: currentSession.jobDetails,
+        history: [],
       });
-
+      
       const rating: AnswerRating = {
         score: resp.score,
         feedback: resp.feedback,
       };
-
+      
       setCurrentRating(rating);
       setCurrentAnswer(answer);
-
-      // Update session
+      
       const updatedSession: InterviewSession = {
         ...currentSession,
         answers: [...currentSession.answers, answer],
@@ -244,231 +510,101 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
       setSession(updatedSession);
       sessionRef.current = updatedSession;
       storage.saveCurrentSession(updatedSession);
-
-      // Play feedback audio then next question audio
-      setConversationState('providing_feedback');
-      updateShouldListen(false);
-      setIsListening(false);
+      
       await playAudio(resp.feedbackAudioDataUrl);
-
-      // Move to next question from backend response
+      
       const nextQuestion: InterviewQuestion = {
         questionNumber: updatedSession.currentQuestionIndex + 2,
-        questionText: resp.nextQuestion,
+        questionText: resp.nextQuestion || 'Tell me more.',
       };
-
-      const nextSession: InterviewSession = {
-        ...updatedSession,
-        currentQuestionIndex: updatedSession.currentQuestionIndex + 1,
-        questions: [...updatedSession.questions, nextQuestion],
-        conversationState: 'asking_question',
-        updatedAt: new Date().toISOString(),
+      
+      pendingNextQuestionRef.current = {
+        question: nextQuestion,
+        audioDataUrl: resp.questionAudioDataUrl || '',
+        session: {
+          ...updatedSession,
+          questions: [...updatedSession.questions, nextQuestion],
+          currentQuestionIndex: updatedSession.currentQuestionIndex + 1,
+          updatedAt: new Date().toISOString(),
+        },
       };
-      setSession(nextSession);
-      sessionRef.current = nextSession;
-      setCurrentQuestion(nextQuestion);
-      setCurrentRating(null);
-      storage.saveCurrentSession(nextSession);
-
-      await playAudio(resp.questionAudioDataUrl);
-      setConversationState('asking_question');
-      updateShouldListen(true);
-      setIsListening(true);
+      
+      await askIfReadyForNextQuestion();
     } catch (err) {
-      console.error('processAnswer error', err);
+      console.error('[Interview] Error processing answer:', err);
       updateShouldListen(true);
-      setIsListening(true);
     }
-  }, [currentQuestion, jobDetails, playAudio, updateShouldListen]);
-
-  const pauseSession = useCallback(() => {
-    const currentSession = sessionRef.current;
-    if (!currentSession) return;
-    
-    setIsPaused(true);
-    updateShouldListen(false);
-    setIsListening(false);
-    
-    const pausedSession: InterviewSession = {
-      ...currentSession,
-      status: 'paused',
-      conversationState: conversationStateRef.current,
-      updatedAt: new Date().toISOString(),
-    };
-    setSession(pausedSession);
-    sessionRef.current = pausedSession;
-    storage.saveCurrentSession(pausedSession);
-  }, [updateShouldListen]);
-
-  const resumeSession = useCallback(() => {
-    const currentSession = sessionRef.current;
-    if (!currentSession || !isPaused) return;
-    
-    setIsPaused(false);
-    updateShouldListen(true);
-    
-    const resumedSession: InterviewSession = {
-      ...currentSession,
-      status: 'active',
-      updatedAt: new Date().toISOString(),
-    };
-    setSession(resumedSession);
-    sessionRef.current = resumedSession;
-    storage.saveCurrentSession(resumedSession);
-    
-    setIsListening(true);
-  }, [isPaused, updateShouldListen]);
-
-  const completeSession = useCallback(() => {
-    const currentSession = sessionRef.current;
-    if (!currentSession) return;
-    
-    updateShouldListen(false);
-    setIsListening(false);
-
-    const completedSession: InterviewSession = {
-      ...currentSession,
-      status: 'completed',
-      updatedAt: new Date().toISOString(),
-    };
-
-    storage.addToSessionHistory(completedSession);
-    storage.clearCurrentSession();
-    
-    if (onComplete) {
-      onComplete();
-    }
-  }, [onComplete, updateShouldListen]);
-
-  const handleVoiceCommand = useCallback((command: VoiceCommand) => {
-    switch (command) {
-      case 'skip':
-        moveToNextQuestion();
-        break;
-      case 'repeat':
-        updateShouldListen(true);
-        setIsListening(true);
-        break;
-      case 'end':
-        completeSession();
-        break;
-      case 'pause':
-        pauseSession();
-        break;
-      case 'resume':
-        resumeSession();
-        break;
-      case 'go_back':
-        // TODO: Implement go back
-        break;
-    }
-  }, [moveToNextQuestion, updateShouldListen, completeSession, pauseSession, resumeSession]);
-
-  const handleUserResponse = useCallback(async (transcript: string, _voiceAnalysis?: any, audioBlob?: Blob | null) => {
-    console.log('[Interview] handleUserResponse called with transcript:', transcript);
-    lastActivityRef.current = Date.now();
-
-    if (pauseTimeoutRef.current) {
-      clearTimeout(pauseTimeoutRef.current);
-      pauseTimeoutRef.current = null;
-    }
-
-    const currentState = conversationStateRef.current;
-
-    // Check for voice commands first
+  }, [currentQuestion, playAudio, updateShouldListen, askIfReadyForNextQuestion]);
+  
+  // Handle voice commands
+  const handleVoiceCommand = useCallback((transcript: string) => {
     const command = detectVoiceCommand(transcript);
-    console.log('[Interview] Detected command:', command, 'state:', currentState);
-
-    // Handle submit command - strip trigger phrase and process answer
+    const currentState = conversationStateRef.current;
+    
     if (command === 'submit') {
       if (currentState === 'listening' || currentState === 'asking_question') {
-        // Remove the trigger phrase from the answer
-        let cleanedTranscript = transcript.toLowerCase()
+        let fullTranscript = accumulatedTranscriptRef.current || transcript;
+        let cleanedTranscript = fullTranscript
           .replace(/thank you\.?$/i, '')
           .replace(/thanks\.?$/i, '')
-          .replace(/that's my answer\.?$/i, '')
-          .replace(/done answering\.?$/i, '')
-          .replace(/that's it\.?$/i, '')
           .trim();
-
-        // Use original case if we have content
-        if (cleanedTranscript.length > 0) {
-          const originalLength = transcript.length;
-          const triggerLength = originalLength - cleanedTranscript.length;
-          cleanedTranscript = transcript.substring(0, transcript.length - triggerLength).trim();
+        
+        if (cleanedTranscript) {
+          processAnswer(cleanedTranscript);
         }
-
-        console.log('[Interview] Submit detected, cleaned transcript:', cleanedTranscript);
-        updateShouldListen(false);
-        setIsListening(false);
-
-        // Use Whisper if available
-        let finalTranscript = cleanedTranscript || transcript;
-        if (audioBlob) {
-          try {
-            const whisperTranscript = await api.transcribeAudio(audioBlob);
-            if (whisperTranscript) {
-              // Also clean Whisper transcript
-              finalTranscript = whisperTranscript
-                .replace(/thank you\.?$/i, '')
-                .replace(/thanks\.?$/i, '')
-                .replace(/that's my answer\.?$/i, '')
-                .replace(/done answering\.?$/i, '')
-                .replace(/that's it\.?$/i, '')
-                .trim() || whisperTranscript;
-            }
-          } catch (err) {
-            console.error('Whisper transcription failed:', err);
-          }
-        }
-
-        processAnswer(finalTranscript);
         return;
       }
     }
-
-    if (command && command !== 'yes' && command !== 'no' && command !== 'submit') {
-      handleVoiceCommand(command);
-      return;
-    }
-
-    // Handle conversation state
-    if (currentState === 'waiting_confirmation') {
-      return;
-    }
-
-    // For listening state without explicit submit, still accumulate
-    // The answer will be processed when they say "thank you" or similar
-
-  }, [handleVoiceCommand, updateShouldListen, processAnswer]);
-
-  // Check for natural pauses
-  useEffect(() => {
-    if ((conversationState === 'listening' || conversationState === 'asking_question') && !isPaused && shouldListen) {
-      pauseTimeoutRef.current = setTimeout(() => {
-        const timeSinceLastActivity = Date.now() - lastActivityRef.current;
-        if (timeSinceLastActivity > 8000 && (conversationStateRef.current === 'listening' || conversationStateRef.current === 'asking_question') && shouldListenRef.current) {
-          // Briefly pause and then resume listening
-          shouldListenRef.current = false;
-          setShouldListen(false);
-          setIsListening(false);
-          setTimeout(() => {
-            shouldListenRef.current = true;
-            setShouldListen(true);
-            setIsListening(true);
-          }, 500);
-          lastActivityRef.current = Date.now();
-        }
-      }, 8000);
-    }
-
-    return () => {
-      if (pauseTimeoutRef.current) {
-        clearTimeout(pauseTimeoutRef.current);
+    
+    if (command === 'yes') {
+      if (readyPromptText) {
+        handleReadyResponse('yes');
+        return;
       }
-    };
-  }, [conversationState, isPaused, shouldListen]);
-
+      if (endSessionPromptText) {
+        completeSession();
+        return;
+      }
+    }
+    
+    if (command === 'no') {
+      if (readyPromptText) {
+        handleReadyResponse('no');
+        return;
+      }
+      if (endSessionPromptText) {
+        setEndSessionPromptText(null);
+        askIfReadyForNextQuestion();
+        return;
+      }
+    }
+  }, [processAnswer, handleReadyResponse, completeSession, askIfReadyForNextQuestion, readyPromptText, endSessionPromptText]);
+  
+  // Handle user response
+  const handleUserResponse = useCallback((transcript: string) => {
+    if (!transcript.trim()) return;
+    
+    accumulatedTranscriptRef.current = (accumulatedTranscriptRef.current + ' ' + transcript).trim();
+    handleVoiceCommand(transcript);
+  }, [handleVoiceCommand]);
+  
+  // Pause session
+  const pauseSession = useCallback(() => {
+    audioManager.current.pause();
+    setIsPaused(true);
+    setIsPlayingAudio(false);
+    updateShouldListen(false);
+    setIsListening(false);
+  }, [updateShouldListen]);
+  
+  // Resume session
+  const resumeSession = useCallback(() => {
+    setIsPaused(false);
+    if (conversationStateRef.current === 'listening' || conversationStateRef.current === 'asking_question') {
+      updateShouldListen(true);
+    }
+  }, [updateShouldListen]);
+  
   return {
     session,
     currentQuestion,
@@ -478,8 +614,14 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
     isPaused,
     isListening,
     setIsListening,
+    isPlayingAudio,
+    readyPromptText,
+    endSessionPromptText,
+    error,
+    isStarting,
     startConversation,
     handleUserResponse,
+    pauseSession,
     resumeSession,
     completeSession,
     showFeedback: session?.feedbackPreference !== 'hide',

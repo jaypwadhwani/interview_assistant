@@ -10,9 +10,11 @@ interface ConversationalVoiceInterfaceProps {
   conversationState: ConversationState;
   isPaused: boolean;
   isListening: boolean;
+  isPlayingAudio: boolean;
   setIsListening: (listening: boolean) => void;
   onUserResponse: (transcript: string, voiceAnalysis?: any, audioBlob?: Blob | null) => void;
   onStartConversation: () => void;
+  onPause: () => void;
   onResume: () => void;
   theme: ColorScheme;
   shouldListen: boolean;
@@ -22,9 +24,11 @@ export const ConversationalVoiceInterface = ({
   conversationState,
   isPaused,
   isListening,
+  isPlayingAudio,
   setIsListening,
   onUserResponse,
   onStartConversation,
+  onPause,
   onResume,
   theme,
   shouldListen,
@@ -79,7 +83,21 @@ export const ConversationalVoiceInterface = ({
   }, [shouldListen, isPaused, conversationState]);
 
   const handleMicrophoneClick = () => {
-    console.log('[VoiceInterface] Microphone clicked:', { isPaused, conversationState, hasStarted, isListening });
+    console.log('[VoiceInterface] Microphone clicked:', { isPaused, conversationState, hasStarted, isListening, isPlayingAudio });
+
+    // If in greeting state, always start the conversation
+    if (conversationState === 'greeting') {
+      if (!hasStarted) {
+        console.log('[VoiceInterface] Starting conversation from greeting state');
+        setHasStarted(true);
+        onStartConversation();
+      } else {
+        console.log('[VoiceInterface] Already started, but still in greeting - restarting');
+        setHasStarted(true);
+        onStartConversation();
+      }
+      return;
+    }
 
     if (isPaused) {
       console.log('[VoiceInterface] Resuming from pause');
@@ -87,35 +105,31 @@ export const ConversationalVoiceInterface = ({
       return;
     }
 
-    if (conversationState === 'greeting' && !hasStarted) {
-      console.log('[VoiceInterface] Starting conversation');
-      setHasStarted(true);
-      onStartConversation();
-    } else if (isListening) {
-      // Toggle off - pause listening
-      console.log('[VoiceInterface] Pausing listening (manual)');
-      hasStartedListeningRef.current = false; // Sync ref
-      stopListening();
-      setIsListening(false);
-    } else {
-      // Toggle on - resume listening
-      console.log('[VoiceInterface] Resuming listening (manual)');
-      hasStartedListeningRef.current = true; // Sync ref
-      startAnalysis();
-      startRecording().catch(() => {});
-      startListening();
-      setIsListening(true);
+    // If audio is playing or listening, pause everything
+    if (isPlayingAudio || isListening) {
+      console.log('[VoiceInterface] Pausing (audio playing or listening)');
+      onPause();
+      return;
     }
+
+    // Resume listening for other states
+    console.log('[VoiceInterface] Resuming listening (manual)');
+    hasStartedListeningRef.current = true; // Sync ref
+    startAnalysis();
+    startRecording().catch(() => {});
+    startListening();
+    setIsListening(true);
   };
 
   const getStatusText = (): string => {
-    if (isPaused) return 'Session paused. Click to resume.';
+    if (isPaused) return 'Assistant is paused.';
+    if (isPlayingAudio) return 'Assistant is speaking.';
     if (conversationState === 'greeting') return 'Click to start the interview';
     if (conversationState === 'waiting_confirmation') return 'Waiting for your response...';
-    if (conversationState === 'asking_question') return 'Listening...';
-    if (conversationState === 'listening') return 'Listening...';
-    if (conversationState === 'providing_feedback') return 'Providing feedback...';
-    if (conversationState === 'asking_feedback_preference') return 'Waiting for your preference...';
+    if (conversationState === 'asking_question') return 'Waiting for your response.';
+    if (conversationState === 'listening') return 'Waiting for your response.';
+    if (conversationState === 'providing_feedback') return 'Assistant is speaking.';
+    if (conversationState === 'asking_feedback_preference') return 'Waiting for your response...';
     return 'Ready';
   };
 
@@ -134,20 +148,27 @@ export const ConversationalVoiceInterface = ({
           <button
             type="button"
             onClick={handleMicrophoneClick}
+            disabled={conversationState === 'waiting_confirmation'}
             className={`relative w-32 h-32 rounded-full flex items-center justify-center transition-all transform shadow-lg ${
               isPaused
                 ? 'bg-yellow-500 text-white hover:bg-yellow-600 hover:scale-105'
+                : conversationState === 'waiting_confirmation'
+                ? 'bg-gray-400 cursor-not-allowed'
                 : `${themeColors.primary} text-white hover:${themeColors.primaryHover} hover:scale-105`
             }`}
             aria-label={isPaused ? 'Resume conversation' : 'Start conversation'}
           >
-            <svg className="w-16 h-16" fill="currentColor" viewBox="0 0 20 20">
-              <path
-                fillRule="evenodd"
-                d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z"
-                clipRule="evenodd"
-              />
-            </svg>
+            {conversationState === 'waiting_confirmation' ? (
+              <div className="w-8 h-8 border-3 border-white border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <svg className="w-16 h-16" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            )}
           </button>
         )}
 
