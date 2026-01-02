@@ -17,6 +17,7 @@ export const JobDetailsForm = ({ onSubmit, theme }: JobDetailsFormProps) => {
   const [jobDescription, setJobDescription] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
+  const [voice, setVoice] = useState('alloy');
 
   const handleStep1Submit = (e: FormEvent) => {
     e.preventDefault();
@@ -51,6 +52,7 @@ export const JobDetailsForm = ({ onSubmit, theme }: JobDetailsFormProps) => {
       jobTitle: jobTitle.trim(),
       jobDescription: jobDescription.trim(),
       notes: notes.trim(),
+      voice,
     };
 
     storage.saveJobDetails(jobDetails);
@@ -74,13 +76,12 @@ export const JobDetailsForm = ({ onSubmit, theme }: JobDetailsFormProps) => {
               <div key={step} className="flex items-center flex-1">
                 <div className="flex flex-col items-center flex-1">
                   <div
-                    className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold text-sm transition-all ${
-                      step === currentStep
-                        ? `${themeColors.primary} text-white shadow-md`
-                        : step < currentStep
+                    className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold text-sm transition-all ${step === currentStep
+                      ? `${themeColors.primary} text-white shadow-md`
+                      : step < currentStep
                         ? 'bg-green-500 text-white'
                         : 'bg-gray-200 text-gray-500'
-                    }`}
+                      }`}
                   >
                     {step < currentStep ? '✓' : step}
                   </div>
@@ -90,9 +91,8 @@ export const JobDetailsForm = ({ onSubmit, theme }: JobDetailsFormProps) => {
                 </div>
                 {step < 3 && (
                   <div
-                    className={`h-0.5 flex-1 mx-3 rounded transition-all ${
-                      step < currentStep ? 'bg-green-500' : 'bg-gray-200'
-                    }`}
+                    className={`h-0.5 flex-1 mx-3 rounded transition-all ${step < currentStep ? 'bg-green-500' : 'bg-gray-200'
+                      }`}
                   />
                 )}
               </div>
@@ -124,9 +124,8 @@ export const JobDetailsForm = ({ onSubmit, theme }: JobDetailsFormProps) => {
                     setJobTitle(e.target.value);
                     setError('');
                   }}
-                  className={`w-full px-5 py-4 bg-white border rounded-2xl ${themeColors.text} text-base placeholder-gray-400 focus:ring-2 focus:ring-${themeColors.accent}/20 focus:border-${themeColors.accent} transition-all ${
-                    error ? 'border-red-300 ring-2 ring-red-100' : themeColors.border
-                  }`}
+                  className={`w-full px-5 py-4 bg-white border rounded-2xl ${themeColors.text} text-base placeholder-gray-400 focus:ring-2 focus:ring-${themeColors.accent}/20 focus:border-${themeColors.accent} transition-all ${error ? 'border-red-300 ring-2 ring-red-100' : themeColors.border
+                    }`}
                   placeholder="e.g., Senior Software Engineer"
                   autoFocus
                 />
@@ -231,6 +230,27 @@ export const JobDetailsForm = ({ onSubmit, theme }: JobDetailsFormProps) => {
                   placeholder="Any additional information that might help with interview preparation..."
                   autoFocus
                 />
+              </div>
+
+              <div className="space-y-3">
+                <label className={`block text-sm font-medium ${themeColors.textSecondary} ml-1`}>
+                  Choose your interviewer's voice
+                </label>
+                <div className="grid grid-cols-3 gap-3">
+                  {['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setVoice(v)}
+                      className={`px-4 py-3 rounded-xl text-sm font-medium capitalize transition-all ${voice === v
+                          ? `${themeColors.primary} text-white shadow-md`
+                          : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-transparent'
+                        }`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="flex gap-3">

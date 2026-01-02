@@ -30,9 +30,9 @@ const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (mobile apps, curl, etc)
     if (!origin) return callback(null, true);
-    
+
     const allowedOrigins = CORS_ORIGIN.split(',').map(o => o.trim());
-    
+
     if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
       callback(null, true);
     } else {
@@ -101,12 +101,12 @@ app.post('/api/tts', async (req, res) => {
 app.post('/api/start-interview', async (req, res) => {
   try {
     if (!openai) {
-      return res.status(500).json({ 
+      return res.status(500).json({
         error: 'OpenAI client not initialized',
         hint: 'Please set OPENAI_API_KEY environment variable'
       });
     }
-    
+
     const { jobDetails } = req.body || {};
     if (!jobDetails || !jobDetails.jobTitle) {
       return res.status(400).json({ error: 'jobDetails.jobTitle is required' });
@@ -115,7 +115,7 @@ app.post('/api/start-interview', async (req, res) => {
     // Generate a conversational, role-appropriate first question
     const jobDescText = jobDetails.jobDescription ? `\n\nJOB DESCRIPTION:\n${jobDetails.jobDescription}` : '';
     const notesText = jobDetails.notes ? `\n\nADDITIONAL CONTEXT / NOTES:\n${jobDetails.notes}` : '';
-    
+
     const prompt = `Generate a warm, conversational opening question for an interview coach starting a practice interview.
 
 JOB TITLE: ${jobDetails.jobTitle}${jobDescText}${notesText}
@@ -143,12 +143,14 @@ Return only the question text, nothing else.`;
       temperature: 0.7
     });
 
-    const question = completion.choices[0].message.content?.trim() || 
+    const question = completion.choices[0].message.content?.trim() ||
       `Hey there, are you ready to begin? For the ${jobDetails.jobTitle} role, tell me about a recent accomplishment you're proud of.`;
+
+    const voice = jobDetails.voice || 'alloy';
 
     const tts = await openai.audio.speech.create({
       model: 'gpt-4o-mini-tts',
-      voice: 'alloy',
+      voice,
       input: question
     });
     const audioBuffer = Buffer.from(await tts.arrayBuffer());
@@ -164,28 +166,28 @@ Return only the question text, nothing else.`;
     console.error('Error status:', err?.status);
     console.error('Error code:', err?.code);
     console.error('Full error:', JSON.stringify(err, Object.getOwnPropertyNames(err)));
-    
+
     const errorMessage = err?.message || 'Unknown error';
     const statusCode = err?.status || err?.response?.status || 500;
-    
+
     // Check for OpenAI API key issues
     if (errorMessage.includes('API key') || errorMessage.includes('authentication') || errorMessage.includes('Invalid') || statusCode === 401) {
-      return res.status(500).json({ 
+      return res.status(500).json({
         error: 'OpenAI API authentication failed',
         details: errorMessage,
         hint: 'Please check your OPENAI_API_KEY environment variable in the server/.env file. Make sure it starts with "sk-" and has no extra spaces.'
       });
     }
-    
+
     // Check if OpenAI client is not initialized
     if (!openai) {
-      return res.status(500).json({ 
+      return res.status(500).json({
         error: 'OpenAI client not initialized',
         hint: 'Please set OPENAI_API_KEY environment variable in server/.env file'
       });
     }
-    
-    res.status(500).json({ 
+
+    res.status(500).json({
       error: 'Failed to start interview',
       details: errorMessage,
       code: err?.code,
@@ -313,13 +315,15 @@ Return your evaluation as JSON with keys: feedback, score, next_question`
     if (isNaN(score) || score < 1.0) score = 1.0;
     if (score > 10.0) score = 10.0;
     score = Math.round(score * 10) / 10; // Round to nearest 0.1
-    
+
     const nextQuestion = parsed.next_question || 'Can you tell me about a time you led a project?';
+
+    const voice = jobDetails.voice || 'alloy';
 
     // TTS for feedback and next question
     const [feedbackTts, questionTts] = await Promise.all([
-      openai.audio.speech.create({ model: 'gpt-4o-mini-tts', voice: 'alloy', input: feedbackText }),
-      openai.audio.speech.create({ model: 'gpt-4o-mini-tts', voice: 'alloy', input: nextQuestion })
+      openai.audio.speech.create({ model: 'gpt-4o-mini-tts', voice, input: feedbackText }),
+      openai.audio.speech.create({ model: 'gpt-4o-mini-tts', voice, input: nextQuestion })
     ]);
 
     const feedbackAudio = Buffer.from(await feedbackTts.arrayBuffer()).toString('base64');

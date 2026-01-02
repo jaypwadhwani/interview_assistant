@@ -26,7 +26,6 @@ export const InterviewSession = ({ jobDetails, onComplete, theme }: InterviewSes
     readyPromptText,
     endSessionPromptText,
     error,
-    isStarting,
     startConversation,
     handleUserResponse,
     pauseSession,

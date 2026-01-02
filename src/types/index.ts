@@ -2,6 +2,7 @@ export interface JobDetails {
   jobTitle: string;
   jobDescription: string;
   notes: string;
+  voice?: string;
 }
 
 export interface InterviewQuestion {

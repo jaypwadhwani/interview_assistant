@@ -4,6 +4,7 @@ export interface JobDetailsPayload {
   jobTitle: string;
   jobDescription?: string;
   notes?: string;
+  voice?: string;
 }
 
 export interface InterviewTurnResponse {
