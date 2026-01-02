@@ -627,5 +627,6 @@ export const useConversationalInterview = (options: UseConversationalInterviewOp
     showFeedback: session?.feedbackPreference !== 'hide',
     shouldListen,
     moveToNextQuestion,
+    submitAnswer: () => processAnswer(accumulatedTranscriptRef.current || currentAnswer),
   };
 };

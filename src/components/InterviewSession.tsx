@@ -33,6 +33,7 @@ export const InterviewSession = ({ jobDetails, onComplete, theme }: InterviewSes
     completeSession,
     showFeedback,
     shouldListen,
+    submitAnswer,
   } = useConversationalInterview({ jobDetails, onComplete });
 
   if (!session) {
@@ -133,6 +134,24 @@ export const InterviewSession = ({ jobDetails, onComplete, theme }: InterviewSes
           theme={theme}
           shouldListen={shouldListen}
         />
+
+        {/* Manual Submit Button - Always show when in listening state */}
+        {conversationState === 'listening' && (
+          <div className="flex justify-center mt-6">
+            <button
+              onClick={() => {
+                // Manually trigger submission with current accumulated text
+                submitAnswer();
+              }}
+              className={`flex items-center gap-2 px-8 py-4 bg-white border-2 ${themeColors.border} hover:border-${themeColors.accent} text-gray-800 rounded-2xl font-semibold text-lg shadow-sm hover:shadow-md transition-all transform hover:-translate-y-0.5`}
+            >
+              <svg className="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              I'm Done / Submit Answer
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

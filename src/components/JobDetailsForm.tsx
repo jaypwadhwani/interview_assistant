@@ -1,4 +1,4 @@
-import { useState, FormEvent, useRef } from 'react';
+import { useState, FormEvent, useRef, useEffect } from 'react';
 import { JobDetails } from '../types';
 import { storage } from '../utils/storage';
 import { ColorScheme, getTheme } from '../utils/theme';
@@ -272,8 +272,8 @@ export const JobDetailsForm = ({ onSubmit, theme }: JobDetailsFormProps) => {
                       type="button"
                       onClick={() => playVoiceSample(v)}
                       className={`px-4 py-3 rounded-xl text-sm font-medium capitalize transition-all flex items-center justify-center gap-2 ${voice === v
-                          ? `${themeColors.primary} text-white shadow-md`
-                          : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-transparent'
+                        ? `${themeColors.primary} text-white shadow-md`
+                        : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-transparent'
                         }`}
                     >
                       {playingVoice === v ? (
