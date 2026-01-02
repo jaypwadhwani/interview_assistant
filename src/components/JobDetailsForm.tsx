@@ -1,7 +1,8 @@
-import { useState, FormEvent } from 'react';
+import { useState, FormEvent, useRef } from 'react';
 import { JobDetails } from '../types';
 import { storage } from '../utils/storage';
 import { ColorScheme, getTheme } from '../utils/theme';
+import { api } from '../utils/api';
 
 interface JobDetailsFormProps {
   onSubmit: (jobDetails: JobDetails) => void;
@@ -18,6 +19,34 @@ export const JobDetailsForm = ({ onSubmit, theme }: JobDetailsFormProps) => {
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
   const [voice, setVoice] = useState('alloy');
+  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const playVoiceSample = async (selectedVoice: string) => {
+    setVoice(selectedVoice);
+
+    // Stop current audio if playing
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    setPlayingVoice(selectedVoice);
+
+    try {
+      const audioUrl = await api.generateTTS('Hello', selectedVoice);
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+
+      audio.onended = () => setPlayingVoice(null);
+      audio.onerror = () => setPlayingVoice(null);
+
+      await audio.play();
+    } catch (err) {
+      console.error('Failed to play voice sample:', err);
+      setPlayingVoice(null);
+    }
+  };
 
   const handleStep1Submit = (e: FormEvent) => {
     e.preventDefault();
@@ -241,12 +270,15 @@ export const JobDetailsForm = ({ onSubmit, theme }: JobDetailsFormProps) => {
                     <button
                       key={v}
                       type="button"
-                      onClick={() => setVoice(v)}
-                      className={`px-4 py-3 rounded-xl text-sm font-medium capitalize transition-all ${voice === v
+                      onClick={() => playVoiceSample(v)}
+                      className={`px-4 py-3 rounded-xl text-sm font-medium capitalize transition-all flex items-center justify-center gap-2 ${voice === v
                           ? `${themeColors.primary} text-white shadow-md`
                           : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-transparent'
                         }`}
                     >
+                      {playingVoice === v ? (
+                        <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                      ) : null}
                       {v}
                     </button>
                   ))}
